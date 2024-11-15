@@ -1,0 +1,843 @@
+---
+title: "TurkeyCPUE"
+author: "Eli Wildey"
+date: "2024-11-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(sswids)
+library(sf)
+library(knitr)
+library(patchwork)
+library(readr)
+library(ggh4x)
+library(mgcv)
+library(shadowtext)
+
+# df <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_join.Rds", sep="/")) #4/15 to 6/30, need this as sf object
+# df <- filter(df)
+# df <- st_as_sf(df)
+dfAll <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_joinAll.Rds", sep="/"))
+df <- filter(dfAll, occ > 17 & occ < 29)
+county = get_spatial_data("counties")
+county <- st_transform(county, 3071)
+camsitesAll <- dfAll%>%group_by(cam_site_id)%>%slice_head()%>%dplyr::select(cam_site_id, geometry)%>%ungroup()
+camsitesExpWindow <- df%>%group_by(cam_site_id)%>%slice_head()%>%dplyr::select(cam_site_id, geometry)%>%ungroup()
+camsite_countiesAll <- st_intersection(camsitesAll, county)%>%st_drop_geometry()
+camsite_countiesExp <- st_intersection(camsitesExpWindow, county)%>%st_drop_geometry()
+camsite_countiesAll <- camsite_countiesAll[,c(1,5)]
+camsite_countiesExp <- camsite_countiesExp[,c(1,5)]
+df <- left_join(df, camsite_countiesExp, by="cam_site_id")
+dfAll <- left_join(dfAll, camsite_countiesAll, by="cam_site_id")
+
+
+#Title- proportion of snapshot camera sites with a detection, spline plot with all zones?, legend titles and labels
+```
+
+## Parameters for filtering
+
+These CPUE metrics are simplistic and do not use covariates. There are some data filters that are needed to ensure that the data used in the calculations is as consistent as possible. For example, we only include occasions that were active for the majority of days. 
+
+```{r parameters, include=FALSE}
+#knitr::kable(table(df$days_active,useNA="always"))
+
+#occasions are 7 days long
+days_active_threshold <- 4
+
+ppn_class_threshold <-  0.95
+
+# additional thresholds for spatial analysis
+## number of occasions needed out of 11 x 6 = 66 or 52*7
+## choose 11 to require at least 1 year of data
+n_occasions_total_thresholdExpWindow <- 11
+n_occasions_total_thresholdAllData <- 52
+
+## number of occasions needed out of 11
+## choose 6 to be at least half of the occasions have data within a year
+n_occasions_annual_thresholdExpWindow <- 6
+n_occasions_annual_thresholdAllData <- 26
+```
+
+
+
+
+```{r data prep, echo=FALSE, include=FALSE, message=FALSE}
+
+#Expert Window 4/15-6/30 
+#by zone - by occasion
+df.byocc <- df %>%
+  filter(days_active >= days_active_threshold) %>%
+  filter(ppn_classified >= ppn_class_threshold) %>%
+  mutate(adult.binary = ifelse(BEAR_ADULT_AMT>0,1,0),
+         young.binary = ifelse(BEAR_YOUNG_AMT>0,1,0)) %>%
+  group_by(year,occ,bear_mgmt_zone_id) %>%
+  summarise(adult.sum = sum(BEAR_ADULT_AMT),
+            young.sum = sum(BEAR_YOUNG_AMT),
+            adult.occ = sum(adult.binary),
+            young.occ = sum(young.binary),
+            num.sites = n(),
+            num.days = sum(days_active)) %>%
+  mutate(adult.propocc = adult.occ/num.sites,
+         young.propocc = young.occ/num.sites,
+         adult.trigsperday = adult.sum/num.days,
+         young.trigsperday = young.sum/num.days) %>%
+  mutate(yearocc = paste0(year,str_pad(occ, width=2, side="left", pad="0"))) %>%
+  arrange(yearocc) %>% 
+  group_by(yearocc) %>%
+  mutate(time = cur_group_id())
+
+
+#by zone - all occasions
+df.allocc <- df %>%
+  filter(days_active >= days_active_threshold) %>%
+  filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(cam_site_id,year,bear_mgmt_zone_id) %>%
+  summarise(adult.sum = sum(BEAR_ADULT_AMT),
+            young.sum = sum(BEAR_YOUNG_AMT),
+            num.days = sum(days_active)) %>%
+  mutate(adult.binary = ifelse(adult.sum>0,1,0),
+         young.binary = ifelse(young.sum>0,1,0)) %>%
+  group_by(year,bear_mgmt_zone_id) %>%
+  summarise(total.days = sum(num.days),
+            adult.trigsperday = sum(adult.sum)/total.days,
+            young.trigsperday = sum(young.sum)/total.days,
+            n.sites = n(),
+            adult.propocc = sum(adult.binary)/n.sites,
+            young.propocc = sum(young.binary)/n.sites)
+
+
+
+#All Data
+#By zone- by occasion
+df.byoccAllData <- dfAll %>%
+  filter(days_active >= days_active_threshold) %>%
+  filter(ppn_classified >= ppn_class_threshold) %>%
+  mutate(adult.binary = ifelse(BEAR_ADULT_AMT>0,1,0),
+         young.binary = ifelse(BEAR_YOUNG_AMT>0,1,0)) %>%
+  group_by(year,occ,bear_mgmt_zone_id) %>%
+  summarise(adult.sum = sum(BEAR_ADULT_AMT),
+            young.sum = sum(BEAR_YOUNG_AMT),
+            adult.occ = sum(adult.binary),
+            young.occ = sum(young.binary),
+            num.sites = n(),
+            num.days = sum(days_active)) %>%
+  mutate(adult.propocc = adult.occ/num.sites,
+         young.propocc = young.occ/num.sites,
+         adult.trigsperday = adult.sum/num.days,
+         young.trigsperday = young.sum/num.days) %>%
+  mutate(yearocc = paste0(year,str_pad(occ, width=2, side="left", pad="0"))) %>%
+  arrange(yearocc) %>% 
+  group_by(yearocc) %>%
+  mutate(time = cur_group_id())
+
+
+#By zone- all occasions
+df.alloccAllData <- dfAll %>%
+  filter(days_active >= days_active_threshold) %>%
+  filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(cam_site_id,year,bear_mgmt_zone_id) %>%
+  summarise(adult.sum = sum(BEAR_ADULT_AMT),
+            young.sum = sum(BEAR_YOUNG_AMT),
+            num.days = sum(days_active)) %>%
+  mutate(adult.binary = ifelse(adult.sum>0,1,0),
+         young.binary = ifelse(young.sum>0,1,0)) %>%
+  group_by(year,bear_mgmt_zone_id) %>%
+  summarise(total.days = sum(num.days),
+            adult.trigsperday = sum(adult.sum)/total.days,
+            young.trigsperday = sum(young.sum)/total.days,
+            n.sites = n(),
+            adult.propocc = sum(adult.binary)/n.sites,
+            young.propocc = sum(young.binary)/n.sites)
+
+
+#Merge exp window and all data for statewide, by zone, and by occ, allocc
+df.byocc$DataPull <- "Exp Window"
+df.byoccAllData$DataPull <- "All Data"
+Merged.ByOcc.ByZone <- rbind(df.byocc, df.byoccAllData)
+
+
+
+df.allocc$DataPull <- "Exp Window"
+df.alloccAllData$DataPull <- "All Data"
+Merged.AllOcc.ByZone <- rbind(df.allocc, df.alloccAllData)
+
+
+```
+
+## Plot of total triggers by occasion
+
+This plot shows the total triggers by occasion over the different species categories. It can be helpful for identifying the different time periods where there are the largest numbers of detections.
+```{r trigs_by_occ_plot, message=FALSE,warning=FALSE}
+activity_plot = dfAll %>%
+  filter(days_active>0) %>%
+  group_by(occ) %>%
+  summarise(bear_adult = sum(BEAR_ADULT_AMT),
+            bear_young = sum(BEAR_YOUNG_AMT)) %>%
+  pivot_longer(cols=c(bear_adult,
+                      bear_young))
+
+#vlines <- c(17, 29)
+ggplot(activity_plot, aes(x=occ,y=value)) +
+  facet_wrap(~name, scales="free_y") +
+  #geom_vline(xintercept = vlines, col = "forestgreen", size=2) +
+  geom_point() +
+  geom_line() +
+   # geom_text(
+   #       aes(x = 17, y = 200, label = "4/15-6/30"),
+   #       size = 3, vjust = 0, hjust = 0, color = "black"
+   #     ) +
+  labs(title="Total triggers by occasion")
+```
+
+## Proportion of sites with a detection
+
+### Across all occasions 
+
+This plot has the proportion of sites with a detection across all occasions. 
+
+```{r plot.temp1.allocc, message=FALSE,warning=FALSE, fig.width= 12, fig.height= 7}
+
+#Exp Window
+#By zone
+# plot.temp1.allocc = df.allocc %>%
+#   select(c(year,bear_mgmt_zone_id,
+#            adult.propocc,
+#            young.propocc)) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc)) %>%
+#   group_by(year,bear_mgmt_zone_id,name) 
+# 
+# ExpWindowZone <- ggplot(plot.temp1.allocc,aes(x=year,y=value,col=name)) +
+#   facet_wrap(~bear_mgmt_zone_id) +
+#   geom_line() +
+#   geom_point() +
+#   labs(title= "April 15 - June 30")
+# 
+# #Statewide
+# plot.temp1.allocc = df.alloccState %>%
+#   select(c(year,
+#            adult.propocc,
+#            young.propocc)) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc)) %>%
+#   group_by(year,name) 
+# 
+# ExpWindowState <- ggplot(plot.temp1.allocc,aes(x=year,y=value,col=name)) +
+#   geom_line() +
+#   geom_point() +
+#   labs(title= "April 15 - June 30")
+# 
+# #All Data
+# #By zone
+# plot.temp1.allocc = df.alloccAllData %>%
+#   select(c(year,bear_mgmt_zone_id,
+#            adult.propocc,
+#            young.propocc)) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc)) %>%
+#   group_by(year,bear_mgmt_zone_id,name) 
+# 
+# AllDataZone <- ggplot(plot.temp1.allocc,aes(x=year,y=value,col=name)) +
+#   facet_wrap(~bear_mgmt_zone_id) +
+#   geom_line() +
+#   geom_point() +
+#   labs(title= "Year Round")
+# 
+# #Statewide
+# plot.temp1.allocc = df.alloccAllDataState %>%
+#   select(c(year,
+#            adult.propocc,
+#            young.propocc)) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc)) %>%
+#   group_by(year,name) 
+# 
+# AllDataState <- ggplot(plot.temp1.allocc,aes(x=year,y=value,col=name)) +
+#   geom_line() +
+#   geom_point() +
+#   labs(title= "Year Round")
+# 
+# plot.ppn.byocc.byzone = ExpWindowZone + 
+#                  AllDataZone +
+#                  plot_layout(nrow=1)
+# 
+# plot.ppn.byocc.state = ExpWindowState + 
+#                  AllDataState +
+#                  plot_layout(nrow=1)
+# 
+# plot.ppn.byocc.byzone
+# plot.ppn.byocc.state
+
+#Statewide
+# AllOcc.State <-Merged.AllOcc.State %>% select(c(year, DataPull,
+#            adult.propocc)) %>%
+#   pivot_longer(cols=c(adult.propocc)) %>%
+#   group_by(DataPull,year,name) 
+# 
+#  ggplot(AllOcc.State,aes(x=year,y=value,col=name)) +
+#   facet_wrap(~DataPull) +
+#   geom_line() +
+#   geom_point() 
+
+#By zone
+#get rid of 2018 data fix axis, looks of plot
+AllOcc.Zone <-Merged.AllOcc.ByZone %>% select(c(year,bear_mgmt_zone_id,
+           adult.propocc,
+           DataPull)) %>% filter(year > 2018) %>%
+  pivot_longer(cols=c(adult.propocc)) %>%
+  group_by(DataPull,year,bear_mgmt_zone_id,name) 
+
+ggplot(AllOcc.Zone,aes(x=year,y=value,color=name)) +
+  facet_grid(DataPull~bear_mgmt_zone_id, switch="y") +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ylab("Proportion Occupied") +
+  ggtitle("Adult Bear Proportion Occupied by Zone") +
+  theme(legend.position="none")
+
+```
+\
+
+### Spline smoothing of by-occasion data
+
+This figure is similar to the furbearer products built for the May 2024 furbearer advisory committee. It uses smoothing at 2 different scales to try and show both the intra-annual and inter-annual patterns in proportion of sites with detections. 
+
+```{r plot.temp1.allocc spline, message=FALSE,warning=FALSE, fig.width= 11, fig.height= 7}
+# ##########################Exp Window###################################
+# #By zone
+# df.byocc.both1 = df.byocc %>%
+#   select(time,year,occ,bear_mgmt_zone_id,
+#          adult.propocc,
+#          young.propocc) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc))
+# #11 occasions of 7, 5yrs
+# year.lines = seq(1,56,11)
+# year.ticks = seq(6,55,11)
+# 
+# 
+# ExpWindowZone <- ggplot(df.byocc.both1,aes_string(x="time",y="value",col="name")) +
+#   #geom_point(size=0.1) +
+#   facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+#   geom_smooth(span=0.1, lwd=0.3,se=FALSE) +
+#   geom_smooth(span=0.5) +
+#   geom_vline(xintercept=year.lines) +
+#   theme(legend.position="right",
+#         axis.ticks.x=element_blank()) +
+#   labs(title=str_wrap("Proportion of sites with bear detections",75),
+#        y = "Proportion of sites",
+#        x = "Time",
+#        subtitle = "April 15 - June 30, 2019 - 2023") +
+#   scale_x_continuous(breaks = year.ticks,
+#                      labels = seq(2019,2023,1))
+# #Statewide
+# df.byocc.both1 = df.byoccState %>%
+#   select(time,year,occ,
+#          adult.propocc,
+#          young.propocc) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc))
+# #11 occasions of 7, 5yrs
+# year.lines = seq(1,56,11)
+# year.ticks = seq(6,55,11)
+# 
+# 
+# ExpWindowState<- ggplot(df.byocc.both1,aes_string(x="time",y="value",col="name")) +
+#   #geom_point(size=0.1) +
+#   facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+#   geom_smooth(span=0.1, lwd=0.3,se=FALSE) +
+#   geom_smooth(span=0.5) +
+#   geom_vline(xintercept=year.lines) +
+#   theme(legend.position="right",
+#         axis.ticks.x=element_blank()) +
+#   labs(title=str_wrap("Proportion of sites with bear detections",75),
+#        y = "Proportion of sites",
+#        x = "Time",
+#        subtitle = "April 15 - June 30, 2019 - 2023") +
+#   scale_x_continuous(breaks = year.ticks,
+#                      labels = seq(2019,2023,1))
+# 
+# #################################All Data#################################
+#By zone
+df.byocc.both1 = df.byoccAllData %>%
+  select(time,year,occ,bear_mgmt_zone_id,
+         adult.propocc) %>%
+  pivot_longer(cols=c(adult.propocc))
+
+df.byocc.both2 <- filter(df.byocc.both1, bear_mgmt_zone_id %in% c("A","B","C","D"))
+
+#52 occasions of 7
+year.lines = seq(53,312,52)
+year.ticks = seq(78,311,52)
+
+
+  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="name")) +
+  facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+  geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
+  stat_smooth() + #
+  geom_vline(xintercept=year.lines) +
+  theme(legend.position="right",
+        axis.ticks.x=element_blank()) +
+  labs(title=str_wrap("Proportion of Snapshot camera sites with bear detections",75),
+       y = "Proportion of sites",
+       x = "Time",
+       subtitle = "Year Round, 2019 - 2023") +
+  scale_x_continuous(breaks = year.ticks,
+                     labels = seq(2019,2023,1)) +
+    coord_cartesian(xlim=c(53,312), expand = FALSE) +
+    ylim(0,0.3) +
+     theme(legend.position="none")
+  
+  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="bear_mgmt_zone_id")) +
+  #geom_point(size=0.1) +
+  #facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+  #geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
+  #geom_smooth(span=0.5, color="blue") +#
+  stat_smooth() + #
+  #stat_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 6), size = 1, se = TRUE,    colour = "green")  +
+  geom_vline(xintercept=year.lines) +
+  theme(legend.position="right",
+        axis.ticks.x=element_blank()) +
+  labs(title=str_wrap("Proportion of sites with bear detections",75),
+       y = "Proportion of sites",
+       x = "Time",
+       subtitle = "Year Round, 2019 - 2023") +
+  scale_x_continuous(breaks = year.ticks,
+                     labels = seq(2019,2023,1)) +
+    coord_cartesian(xlim=c(53,312), expand = FALSE) +
+     labs(color='Bear Management Zone') 
+
+  
+
+# 
+# plot.ppn.byocc.byzone = ExpWindowZone + 
+#                  AllDataZone +
+#                  plot_layout(nrow=1)
+# 
+
+# 
+# plot.ppn.byocc.byzone
+
+# 
+
+
+############################By zone####################################################
+# ByOcc.Zone = Merged.ByOcc.ByZone %>%st_drop_geometry()%>%
+#   select(time,year,occ,bear_mgmt_zone_id,
+#          adult.propocc,
+#          young.propocc, DataPull) %>%
+#   pivot_longer(cols=c(adult.propocc,
+#                       young.propocc))
+# 
+# ByOcc.Zone <- filter(ByOcc.Zone, name == "adult.propocc")
+# 
+# #11 occasions of 7, 5yrs Exp Window
+# year.linesExpWindow = seq(12,67,11)
+# year.ticksExpWindow = seq(17,66,11)
+# 
+# #52 occasions of 7 All Data
+# year.linesAllData = seq(53,313,52)
+# year.ticksAllData = seq(78,311,52)
+# 
+# # for vlines
+# year.vlines <- data.frame(
+#   DataPull = c(rep("All Data",6), rep("Exp Window",6)),
+#   vline= c(year.linesAllData, year.linesExpWindow)) 
+
+# ggplot(ByOcc.Zone,aes_string(x="time",y="value",col="name")) +
+#   #geom_point(size=0.1) +
+#   facet_grid(bear_mgmt_zone_id~DataPull, scales="free",
+#              labeller = as_labeller(c(`All Data` = "Year Round, 2019-2023",
+#                                     `Exp Window` = "April 15 - June 30, 2019 - 2023",
+#                                     A = "A",
+#                                     B = "B",
+#                                     C = "C",
+#                                     D = "D",
+#                                     E = "E",
+#                                     F = "F"))) +#,scales = c("free_y")) +
+#   geom_smooth(span=0.1, lwd=0.3,se=FALSE) +
+#   geom_smooth(span=0.5) +
+#   geom_vline(data = year.vlines, aes(xintercept=vline)) +
+#   theme(legend.position="right",
+#         axis.ticks.x=element_blank()) +
+#   labs(title=str_wrap("Proportion of sites with bear detections",75),
+#        y = "Proportion of sites",
+#        x = "Time") +
+# ggh4x::facetted_pos_scales(
+#     x = list(
+#       DataPull == "All Data" ~ scale_x_continuous(breaks = year.ticksAllData,
+#                         labels = seq(2019,2023,1)),
+#       DataPull == "Exp Window" ~ scale_x_continuous(breaks = year.ticksExpWindow,
+#                         labels = seq(2019,2023,1))
+#     )
+#   )
+
+#only zones A,B,C,D
+# ggplot(filter(ByOcc.Zone, bear_mgmt_zone_id %in% c("A","B","C","D")),aes_string(x="time",y="value",col="name")) +
+#   geom_point(size=0.1) +
+#   facet_grid(bear_mgmt_zone_id~DataPull, scales="free", 
+#              labeller = as_labeller(c(`All Data` = "Year Round, 2019-2023",
+#                                     `Exp Window` = "May 1 - July 16, 2019 - 2023",
+#                                     A = "A",
+#                                     B = "B",
+#                                     C = "C",
+#                                     D = "D"))) +#,scales = c("free_y")) +
+#   geom_smooth(span=0.1, lwd=0.3,se=FALSE) +
+#   geom_smooth(span=0.5) +
+#   geom_vline(data = year.vlines, aes(xintercept=vline)) +
+#   theme(legend.position="right",
+#         axis.ticks.x=element_blank()) +
+#   labs(title=str_wrap("Proportion of sites with bear detections, Zones A-D",75),
+#        y = "Proportion of sites",
+#        x = "Time") +
+# ggh4x::facetted_pos_scales(
+#     x = list(
+#       DataPull == "All Data" ~ scale_x_continuous(breaks = year.ticksAllData,
+#                         labels = seq(2019,2023,1), limits = c(2019,NA)),
+#       DataPull == "Exp Window" ~ scale_x_continuous(breaks = year.ticksExpWindow,
+#                         labels = seq(2019,2023,1), limits = c(2019,NA))
+#     )
+#   )    # correctly labe plot with years, remove 2018 data from plot , limits = c(2019,NA)
+# 
+# ggplot(filter(ByOcc.Zone, bear_mgmt_zone_id %in% c("A","B","C","D")),aes_string(x="time",y="value",col="name")) +
+#   geom_point(size=0.1) +
+#   facet_wrap(bear_mgmt_zone_id, scales="free", 
+#              labeller = as_labeller(c(`All Data` = "Year Round, 2019-2023",
+#                                     A = "A",
+#                                     B = "B",
+#                                     C = "C",
+#                                     D = "D"))) +#,scales = c("free_y")) +
+#   geom_smooth(span=0.1, lwd=0.3,se=FALSE) +
+#   geom_smooth(span=0.5) +
+#   geom_vline(data = year.vlines, aes(xintercept=vline)) +
+#   theme(legend.position="right",
+#         axis.ticks.x=element_blank()) +
+#   labs(title=str_wrap("Proportion of sites with bear detections, Zones A-D",75),
+#        y = "Proportion of sites",
+#        x = "Time") +
+# ggh4x::facetted_pos_scales(
+#     x = list(
+#       DataPull == "All Data" ~ scale_x_continuous(breaks = year.ticksAllData,
+#                         labels = seq(2019,2023,1), limits = c(2019,NA)),
+#       DataPull == "Exp Window" ~ scale_x_continuous(breaks = year.ticksExpWindow,
+#                         labels = seq(2019,2023,1), limits = c(2019,NA))
+#     )
+#   )    # correctly label plot with years, remove 2018 data from plot , limits = c(2019,NA)
+
+
+
+
+
+```
+
+# Spatial trends
+
+## Data prep
+
+Similar to above, we can look at spatial trends for the average proportion of sites and the triggers per day, both with detection by occasion or for all occasions together.
+
+```{r data_prep_spatial, include=FALSE, message=FALSE,warning=FALSE}
+#kable(list_spatial_layers())
+
+# this is the layer name of interest in 'layers'
+layer = get_spatial_data("bear_zones")
+counties <- get_spatial_data("counties")
+
+#Expert Window
+ppn.byyear.ExpWindow = df %>%
+  dplyr::filter(days_active >= days_active_threshold) %>%
+  dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(bear_mgmt_zone_id,cam_site_id,year) %>%
+  summarise(n.occ = n(),
+            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
+            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+  filter(n.occ >= n_occasions_annual_thresholdExpWindow) %>%
+  group_by(bear_mgmt_zone_id,year) %>%
+  summarise(n.sites = n(),
+            adult.ppn = sum(adult.det)/n.sites,
+            young.ppn = sum(young.det)/n.sites) %>%
+  group_by(bear_mgmt_zone_id) %>%
+  summarise(n.sites = sum(n.sites),
+            adult.mean = mean(adult.ppn),
+            young.mean = mean(young.ppn),
+            adult.sd = sd(adult.ppn),
+            young.sd = sd(young.ppn))
+
+ppn.byyear.county.ExpWindow = df %>%
+  dplyr::filter(days_active >= days_active_threshold) %>%
+  dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(COUNTY_NAM,cam_site_id,year) %>%
+  summarise(n.occ = n(),
+            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
+            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+  filter(n.occ >= n_occasions_annual_thresholdExpWindow) %>%
+  group_by(COUNTY_NAM,year) %>%
+  summarise(n.sites = n(),
+            adult.ppn = sum(adult.det)/n.sites,
+            young.ppn = sum(young.det)/n.sites) %>%
+  group_by(COUNTY_NAM) %>%
+  summarise(n.sites = sum(n.sites),
+            adult.mean = mean(adult.ppn),
+            young.mean = mean(young.ppn),
+            adult.sd = sd(adult.ppn),
+            young.sd = sd(young.ppn))
+
+#All Data
+ppn.byyear.AllData = dfAll %>% filter(year > 2018) %>%
+  dplyr::filter(days_active >= days_active_threshold) %>%
+  dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(bear_mgmt_zone_id,cam_site_id,year) %>%
+  summarise(n.occ = n(),
+            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
+            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+  filter(n.occ >= n_occasions_annual_thresholdAllData) %>%
+  group_by(bear_mgmt_zone_id,year) %>%
+  summarise(n.sites = n(),
+            adult.ppn = sum(adult.det)/n.sites,
+            young.ppn = sum(young.det)/n.sites) %>%
+  group_by(bear_mgmt_zone_id) %>%
+  summarise(n.sites = sum(n.sites),
+            adult.mean = mean(adult.ppn),
+            young.mean = mean(young.ppn),
+            adult.sd = sd(adult.ppn),
+            young.sd = sd(young.ppn))
+
+ppn.byyear.county.AllData = dfAll %>% filter(year > 2018) %>%
+  dplyr::filter(days_active >= days_active_threshold) %>%
+  dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
+  group_by(COUNTY_NAM,cam_site_id,year) %>%
+  summarise(n.occ = n(),
+            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
+            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+  filter(n.occ >= n_occasions_annual_thresholdAllData) %>%
+  group_by(COUNTY_NAM,year) %>%
+  summarise(n.sites = n(),
+            adult.ppn = sum(adult.det)/n.sites,
+            young.ppn = sum(young.det)/n.sites) %>%
+  group_by(COUNTY_NAM) %>%
+  summarise(n.sites = sum(n.sites),
+            adult.mean = mean(adult.ppn),
+            young.mean = mean(young.ppn),
+            adult.sd = sd(adult.ppn),
+            young.sd = sd(young.ppn))
+### Merge all data and expert window into one data frame
+ppn.byyear.ExpWindow$DataPull <- "Exp Window"
+ppn.byyear.AllData$DataPull <- "All Data"
+Merged.ppnbyyear.zone <- rbind(ppn.byyear.ExpWindow,ppn.byyear.AllData)
+
+ppn.byyear.county.ExpWindow$DataPull <- "Exp Window"
+ppn.byyear.county.AllData$DataPull <- "All Data"
+Merged.ppnbyyear.county <- rbind(ppn.byyear.county.ExpWindow,ppn.byyear.county.AllData)
+
+```
+
+### By year
+
+```{r zone map2, message=FALSE,warning=FALSE, fig.width= 11, fig.height= 7}
+
+#Expert Window
+# map.ppn.byyear = layer %>%
+#   st_transform(., crs = 3071) %>%
+#   left_join(st_drop_geometry(ppn.byyear.ExpWindow))
+#   
+# plot.ppn.byyear.adult.ExpWindow = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="adult.mean")) +
+#   labs(title=str_wrap(paste("Adult bear-Expert Window"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+# 
+# plot.ppn.byyear.young.ExpWindow = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="young.mean")) +
+#   labs(title=str_wrap(paste("Young Bear-Expert Window"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+# 
+# #All Data
+map.ppn.byyear = layer %>%
+  st_transform(., crs = 3071) %>%
+  left_join(st_drop_geometry(ppn.byyear.AllData))
+
+#plot.ppn.byyear.adult.AllData =
+  ggplot() +
+  geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="adult.mean")) +  #
+  geom_sf_text(data = map.ppn.byyear, aes(label = bear_mgmt_zone_id), size=9, color="white")+
+  labs(title=str_wrap(paste("Adult Bear -- Proportion of Snapshot Camera with a Detection"),80)) +
+  scale_y_continuous() +
+    theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
+# 
+# plot.ppn.byyear.young.AllData = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="young.mean")) +
+#   labs(title=str_wrap(paste("Young Bear- All Data"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+
+
+# plot.ppn.byyear = plot.ppn.byyear.adult.ExpWindow + plot.ppn.byyear.adult.AllData
+#                  plot.ppn.byyear.young.ExpWindow + plot.ppn.byyear.young.AllData
+#                  plot_layout(nrow=2)
+# 
+# plot.ppn.byyear
+
+
+
+##############################Zone################################################
+# map.ppn.byyear.merged = layer %>%
+#   st_transform(., crs = 3071) %>%
+#   left_join(st_drop_geometry(Merged.ppnbyyear.zone))
+# 
+# #adult
+# ggplot() + geom_sf(data = map.ppn.byyear.merged, stat="sf_coordinates", mapping=aes_string(fill="adult.mean")) +
+#   geom_shadowtext(data = map.ppn.byyear.merged, aes(label = bear_mgmt_zone_id))+
+#   labs(title=str_wrap(paste("Adult Bear"),80)) +
+#   facet_wrap(~DataPull, scale = "fixed") +
+#   scale_y_continuous()
+# #young
+# ggplot() + geom_sf(data = map.ppn.byyear.merged, mapping=aes_string(fill="young.mean")) +
+#   geom_shadowtext(data = map.ppn.byyear.merged, stat="sf_coordinates", aes(label = bear_mgmt_zone_id), )+
+#   labs(title=str_wrap(paste("Young Bear"),80)) +
+#   facet_wrap(~DataPull, scale = "fixed") +
+#   scale_y_continuous()
+
+
+# table.ppn.byyear = map.ppn.byyear %>%
+#   select(bear_mgmt_zone_id, n.sites,
+#          adult.mean,adult.sd,
+#          young.mean,young.sd) %>%
+#   sf::st_drop_geometry() %>%
+#   distinct() %>%
+#   arrange(bear_mgmt_zone_id)
+# 
+# table.ppn.byyear %>%
+#   kableExtra::kbl() %>%
+#   kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+#   kableExtra::scroll_box(width = "100%", height = "300px")
+
+```
+
+## by year - county
+
+```{r countymap2,  message=FALSE,warning=FALSE, fig.width= 11, fig.height= 7}
+
+#Expert Window
+# map.ppn.byyear.county = counties %>%
+#   st_transform(., crs = 3071) %>%
+#   left_join(st_drop_geometry(ppn.byyear.county.ExpWindow))
+#   
+# plot.ppn.byyear.adult.county.ExpWindow = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="adult.mean")) +
+#   labs(title=str_wrap(paste("Adult Bear- Expert Window"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+# 
+# plot.ppn.byyear.young.county.ExpWindow = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="young.mean")) +
+#   labs(title=str_wrap(paste("Young Bear - Expert Window"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+# 
+
+
+#All Data
+map.ppn.byyear.county = counties %>%
+  st_transform(., crs = 3071) %>%
+  left_join(st_drop_geometry(ppn.byyear.county.AllData))
+
+
+  ggplot() +
+  geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="adult.mean")) +
+  geom_sf(data=layer, color= "white", fill=NA) +
+  geom_sf_text(data = map.ppn.byyear, aes(label = bear_mgmt_zone_id), size=9, color="white")+
+  labs(title=str_wrap(paste("Adult Bear -- Proportion of Snapshot Camera with a Detection"),80)) +
+  scale_y_continuous() +
+    theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
+# 
+# plot.ppn.byyear.young.county.AllData = 
+#   ggplot() +
+#   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="young.mean")) +
+#   labs(title=str_wrap(paste("Young Bear - All Data"),80)) +
+#   scale_fill_gradient(name = "Proportion",
+#                        #limits = c(0,1),
+#                        low = "white",
+#                        high = "deepskyblue4") +
+#   theme(axis.title.x=element_blank(),
+#         axis.title.y=element_blank())
+# 
+# 
+# 
+# plot.ppn.byyear.county = plot.ppn.byyear.adult.county.ExpWindow + plot.ppn.byyear.adult.county.AllData
+#                  plot.ppn.byyear.young.county.ExpWindow + plot.ppn.byyear.young.county.AllData
+#                  plot_layout(nrow=2)
+# 
+# plot.ppn.byyear.county
+
+
+###############################County###############################################
+
+
+# map.ppn.byyear.county.merged = counties %>%
+#   st_transform(., crs = 3071) %>%
+#   left_join(st_drop_geometry(Merged.ppnbyyear.county))
+# 
+# #adult
+# ggplot() + 
+#   geom_sf(data = map.ppn.byyear.county.merged, mapping=aes_string(fill="adult.mean")) +
+#   geom_sf(data=BearZones, color= "white", fill=NA) +
+#   geom_shadowtext(data = BearZones, stat="sf_coordinates", aes(label = bear_mgmt_zone_id))+
+#   labs(title=str_wrap(paste("Adult Bear"),80)) +
+#   facet_wrap(~DataPull, scale = "fixed") +
+#   scale_y_continuous()
+# #young
+# ggplot() + geom_sf(data = map.ppn.byyear.county.merged, mapping=aes_string(fill="young.mean")) +
+#   geom_sf(data=BearZones, color= "white", fill=NA) +
+#   geom_shadowtext(data = BearZones, stat="sf_coordinates", aes(label = bear_mgmt_zone_id))+
+#   labs(title=str_wrap(paste("Young Bear"),80)) +
+#   facet_wrap(~DataPull, scale = "fixed") +
+#   scale_y_continuous()
+
+# table.ppn.byyear.county = map.ppn.byyear.county %>%
+#   select(cty_name, n.sites,
+#          adult.mean,adult.sd,
+#          young.mean,young.sd) %>%
+#   sf::st_drop_geometry() %>%
+#   distinct() %>%
+#   arrange(cty_name)
+# 
+# table.ppn.byyear.county %>%
+#   kableExtra::kbl() %>%
+#   kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+#   kableExtra::scroll_box(width = "100%", height = "300px")
+
+```
+
+
