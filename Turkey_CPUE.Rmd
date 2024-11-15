@@ -87,7 +87,7 @@ df.byocc <- df %>%
          adult.trigsperday = adult.sum/num.days,
          young.trigsperday = young.sum/num.days) %>%
   mutate(yearocc = paste0(year,str_pad(occ, width=2, side="left", pad="0"))) %>%
-  arrange(yearocc) %>% 
+  arrange(yearocc) %>%
   group_by(yearocc) %>%
   mutate(time = cur_group_id())
 
@@ -117,11 +117,11 @@ df.allocc <- df %>%
 df.byoccAllData <- dfAll %>%
   filter(days_active >= days_active_threshold) %>%
   filter(ppn_classified >= ppn_class_threshold) %>%
-  mutate(adult.binary = ifelse(BEAR_ADULT_AMT>0,1,0),
-         young.binary = ifelse(BEAR_YOUNG_AMT>0,1,0)) %>%
-  group_by(year,occ,bear_mgmt_zone_id) %>%
-  summarise(adult.sum = sum(BEAR_ADULT_AMT),
-            young.sum = sum(BEAR_YOUNG_AMT),
+  mutate(adult.binary = ifelse(TURKEY_AMT>0,1,0),
+         young.binary = ifelse(TURKEY_YOUNG_AMT>0,1,0)) %>%
+  group_by(year,occ,turkey_mgmt_unit_id) %>%
+  summarise(adult.sum = sum(TURKEY_AMT),
+            young.sum = sum(TURKEY_YOUNG_AMT),
             adult.occ = sum(adult.binary),
             young.occ = sum(young.binary),
             num.sites = n(),
@@ -140,13 +140,13 @@ df.byoccAllData <- dfAll %>%
 df.alloccAllData <- dfAll %>%
   filter(days_active >= days_active_threshold) %>%
   filter(ppn_classified >= ppn_class_threshold) %>%
-  group_by(cam_site_id,year,bear_mgmt_zone_id) %>%
-  summarise(adult.sum = sum(BEAR_ADULT_AMT),
-            young.sum = sum(BEAR_YOUNG_AMT),
+  group_by(cam_site_id,year,turkey_mgmt_unit_id) %>%
+  summarise(adult.sum = sum(TURKEY_AMT),
+            young.sum = sum(TURKEY_YOUNG_AMT),
             num.days = sum(days_active)) %>%
   mutate(adult.binary = ifelse(adult.sum>0,1,0),
          young.binary = ifelse(young.sum>0,1,0)) %>%
-  group_by(year,bear_mgmt_zone_id) %>%
+  group_by(year,turkey_mgmt_unit_id) %>%
   summarise(total.days = sum(num.days),
             adult.trigsperday = sum(adult.sum)/total.days,
             young.trigsperday = sum(young.sum)/total.days,
@@ -156,15 +156,15 @@ df.alloccAllData <- dfAll %>%
 
 
 #Merge exp window and all data for statewide, by zone, and by occ, allocc
-df.byocc$DataPull <- "Exp Window"
-df.byoccAllData$DataPull <- "All Data"
-Merged.ByOcc.ByZone <- rbind(df.byocc, df.byoccAllData)
+ df.byocc$DataPull <- "Exp Window"
+ df.byoccAllData$DataPull <- "All Data"
+ Merged.ByOcc.ByZone <- rbind(df.byocc, df.byoccAllData)
 
 
-
-df.allocc$DataPull <- "Exp Window"
-df.alloccAllData$DataPull <- "All Data"
-Merged.AllOcc.ByZone <- rbind(df.allocc, df.alloccAllData)
+ 
+ df.allocc$DataPull <- "Exp Window"
+ df.alloccAllData$DataPull <- "All Data"
+ Merged.AllOcc.ByZone <- rbind(df.allocc, df.alloccAllData)
 
 
 ```
@@ -176,10 +176,10 @@ This plot shows the total triggers by occasion over the different species catego
 activity_plot = dfAll %>%
   filter(days_active>0) %>%
   group_by(occ) %>%
-  summarise(bear_adult = sum(BEAR_ADULT_AMT),
-            bear_young = sum(BEAR_YOUNG_AMT)) %>%
-  pivot_longer(cols=c(bear_adult,
-                      bear_young))
+  summarise(turkey_adult = sum(TURKEY_AMT),
+            turkey_young = sum(TURKEY_YOUNG_AMT)) %>%
+  pivot_longer(cols=c(turkey_adult,
+                      turkey_young))
 
 #vlines <- c(17, 29)
 ggplot(activity_plot, aes(x=occ,y=value)) +
@@ -286,19 +286,19 @@ This plot has the proportion of sites with a detection across all occasions.
 
 #By zone
 #get rid of 2018 data fix axis, looks of plot
-AllOcc.Zone <-Merged.AllOcc.ByZone %>% select(c(year,bear_mgmt_zone_id,
-           adult.propocc,
+AllOcc.Zone <-Merged.AllOcc.ByZone %>% select(c(year,turkey_mgmt_unit_id,
+           adult.propocc, young.propocc,
            DataPull)) %>% filter(year > 2018) %>%
-  pivot_longer(cols=c(adult.propocc)) %>%
-  group_by(DataPull,year,bear_mgmt_zone_id,name) 
+  pivot_longer(cols=c(adult.propocc, young.propocc)) %>%
+  group_by(DataPull,year,turkey_mgmt_unit_id,name) 
 
 ggplot(AllOcc.Zone,aes(x=year,y=value,color=name)) +
-  facet_grid(DataPull~bear_mgmt_zone_id, switch="y") +
+  facet_grid(DataPull~turkey_mgmt_unit_id, switch="y") +
   geom_smooth(method = "lm") +
   geom_point() +
   theme(axis.text.x = element_text(angle = 90)) +
   ylab("Proportion Occupied") +
-  ggtitle("Adult Bear Proportion Occupied by Zone") +
+  ggtitle("Turkey Proportion Occupied by Zone") +
   theme(legend.position="none")
 
 ```
@@ -366,25 +366,25 @@ This figure is similar to the furbearer products built for the May 2024 furbeare
 # #################################All Data#################################
 #By zone
 df.byocc.both1 = df.byoccAllData %>%
-  select(time,year,occ,bear_mgmt_zone_id,
-         adult.propocc) %>%
-  pivot_longer(cols=c(adult.propocc))
+  select(time,year,occ,turkey_mgmt_unit_id,
+         adult.propocc, young.propocc) %>%
+  pivot_longer(cols=c(adult.propocc, young.propocc))
 
-df.byocc.both2 <- filter(df.byocc.both1, bear_mgmt_zone_id %in% c("A","B","C","D"))
+#df.byocc.both2 <- filter(df.byocc.both1, bear_mgmt_zone_id %in% c("A","B","C","D"))
 
 #52 occasions of 7
 year.lines = seq(53,312,52)
 year.ticks = seq(78,311,52)
 
 
-  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="name")) +
-  facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+  ggplot(df.byocc.both1,aes_string(x="time",y="value",col="name")) +
+  facet_wrap(~turkey_mgmt_unit_id) +#,scales = c("free_y")) +
   geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
   stat_smooth() + #
   geom_vline(xintercept=year.lines) +
   theme(legend.position="right",
         axis.ticks.x=element_blank()) +
-  labs(title=str_wrap("Proportion of Snapshot camera sites with bear detections",75),
+  labs(title=str_wrap("Proportion of Snapshot camera sites with turkey detections",75),
        y = "Proportion of sites",
        x = "Time",
        subtitle = "Year Round, 2019 - 2023") +
@@ -394,7 +394,7 @@ year.ticks = seq(78,311,52)
     ylim(0,0.3) +
      theme(legend.position="none")
   
-  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="bear_mgmt_zone_id")) +
+  ggplot(filter(df.byocc.both1, name == adult.propocc),aes_string(x="time",y="value",col="turkey_mgmt_unit_id")) +
   #geom_point(size=0.1) +
   #facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
   #geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
@@ -404,14 +404,14 @@ year.ticks = seq(78,311,52)
   geom_vline(xintercept=year.lines) +
   theme(legend.position="right",
         axis.ticks.x=element_blank()) +
-  labs(title=str_wrap("Proportion of sites with bear detections",75),
+  labs(title=str_wrap("Proportion of sites with adult turkey detections",75),
        y = "Proportion of sites",
        x = "Time",
        subtitle = "Year Round, 2019 - 2023") +
   scale_x_continuous(breaks = year.ticks,
                      labels = seq(2019,2023,1)) +
     coord_cartesian(xlim=c(53,312), expand = FALSE) +
-     labs(color='Bear Management Zone') 
+     labs(color='Turkey Management Unit') 
 
   
 
@@ -546,23 +546,23 @@ Similar to above, we can look at spatial trends for the average proportion of si
 #kable(list_spatial_layers())
 
 # this is the layer name of interest in 'layers'
-layer = get_spatial_data("bear_zones")
+layer = get_spatial_data("turkey_mgt_zones")
 counties <- get_spatial_data("counties")
 
 #Expert Window
 ppn.byyear.ExpWindow = df %>%
   dplyr::filter(days_active >= days_active_threshold) %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
-  group_by(bear_mgmt_zone_id,cam_site_id,year) %>%
+  group_by(turkey_mgmt_unit_id,cam_site_id,year) %>%
   summarise(n.occ = n(),
-            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
-            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+            adult.det = ifelse(sum(TURKEY_AMT)>0,1,0),
+            young.det = ifelse(sum(TURKEY_YOUNG_AMT)>0,1,0)) %>%
   filter(n.occ >= n_occasions_annual_thresholdExpWindow) %>%
-  group_by(bear_mgmt_zone_id,year) %>%
+  group_by(turkey_mgmt_unit_id,year) %>%
   summarise(n.sites = n(),
             adult.ppn = sum(adult.det)/n.sites,
             young.ppn = sum(young.det)/n.sites) %>%
-  group_by(bear_mgmt_zone_id) %>%
+  group_by(turkey_mgmt_unit_id) %>%
   summarise(n.sites = sum(n.sites),
             adult.mean = mean(adult.ppn),
             young.mean = mean(young.ppn),
@@ -574,8 +574,8 @@ ppn.byyear.county.ExpWindow = df %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
   group_by(COUNTY_NAM,cam_site_id,year) %>%
   summarise(n.occ = n(),
-            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
-            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+            adult.det = ifelse(sum(TURKEY_AMT)>0,1,0),
+            young.det = ifelse(sum(TURKEY_YOUNG_AMT)>0,1,0)) %>%
   filter(n.occ >= n_occasions_annual_thresholdExpWindow) %>%
   group_by(COUNTY_NAM,year) %>%
   summarise(n.sites = n(),
@@ -592,16 +592,16 @@ ppn.byyear.county.ExpWindow = df %>%
 ppn.byyear.AllData = dfAll %>% filter(year > 2018) %>%
   dplyr::filter(days_active >= days_active_threshold) %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
-  group_by(bear_mgmt_zone_id,cam_site_id,year) %>%
+  group_by(turkey_mgmt_unit_id,cam_site_id,year) %>%
   summarise(n.occ = n(),
-            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
-            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+            adult.det = ifelse(sum(TURKEY_AMT)>0,1,0),
+            young.det = ifelse(sum(TURKEY_YOUNG_AMT)>0,1,0)) %>%
   filter(n.occ >= n_occasions_annual_thresholdAllData) %>%
-  group_by(bear_mgmt_zone_id,year) %>%
+  group_by(turkey_mgmt_unit_id,year) %>%
   summarise(n.sites = n(),
             adult.ppn = sum(adult.det)/n.sites,
             young.ppn = sum(young.det)/n.sites) %>%
-  group_by(bear_mgmt_zone_id) %>%
+  group_by(turkey_mgmt_unit_id) %>%
   summarise(n.sites = sum(n.sites),
             adult.mean = mean(adult.ppn),
             young.mean = mean(young.ppn),
@@ -613,8 +613,8 @@ ppn.byyear.county.AllData = dfAll %>% filter(year > 2018) %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
   group_by(COUNTY_NAM,cam_site_id,year) %>%
   summarise(n.occ = n(),
-            adult.det = ifelse(sum(BEAR_ADULT_AMT)>0,1,0),
-            young.det = ifelse(sum(BEAR_YOUNG_AMT)>0,1,0)) %>%
+            adult.det = ifelse(sum(TURKEY_AMT)>0,1,0),
+            young.det = ifelse(sum(TURKEY_YOUNG_AMT)>0,1,0)) %>%
   filter(n.occ >= n_occasions_annual_thresholdAllData) %>%
   group_by(COUNTY_NAM,year) %>%
   summarise(n.sites = n(),
@@ -676,21 +676,21 @@ map.ppn.byyear = layer %>%
 #plot.ppn.byyear.adult.AllData =
   ggplot() +
   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="adult.mean")) +  #
-  geom_sf_text(data = map.ppn.byyear, aes(label = bear_mgmt_zone_id), size=9, color="white")+
-  labs(title=str_wrap(paste("Adult Bear -- Proportion of Snapshot Camera with a Detection"),80)) +
+  geom_sf_text(data = map.ppn.byyear, aes(label = turkey_mgmt_unit_id), size=9, color="white")+
+  labs(title=str_wrap(paste("Adult Turkey -- Proportion of Snapshot Camera with a Detection"),80)) +
   scale_y_continuous() +
     theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
 # 
 # plot.ppn.byyear.young.AllData = 
-#   ggplot() +
-#   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="young.mean")) +
-#   labs(title=str_wrap(paste("Young Bear- All Data"),80)) +
-#   scale_fill_gradient(name = "Proportion",
-#                        #limits = c(0,1),
-#                        low = "white",
-#                        high = "deepskyblue4") +
-#   theme(axis.title.x=element_blank(),
-#         axis.title.y=element_blank())
+  ggplot() +
+  geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="young.mean")) +
+  labs(title=str_wrap(paste("Young Turkey - All Data"),80)) +
+  scale_fill_gradient(name = "Proportion",
+                       #limits = c(0,1),
+                       low = "white",
+                       high = "deepskyblue4") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank())
 
 
 # plot.ppn.byyear = plot.ppn.byyear.adult.ExpWindow + plot.ppn.byyear.adult.AllData
@@ -777,22 +777,22 @@ map.ppn.byyear.county = counties %>%
   ggplot() +
   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="adult.mean")) +
   geom_sf(data=layer, color= "white", fill=NA) +
-  geom_sf_text(data = map.ppn.byyear, aes(label = bear_mgmt_zone_id), size=9, color="white")+
-  labs(title=str_wrap(paste("Adult Bear -- Proportion of Snapshot Camera with a Detection"),80)) +
+  geom_sf_text(data = map.ppn.byyear, aes(label = turkey_mgmt_unit_id), size=9, color="white")+
+  labs(title=str_wrap(paste("Adult Turkey -- Proportion of Snapshot Camera with a Detection"),80)) +
   scale_y_continuous() +
     theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
 # 
-# plot.ppn.byyear.young.county.AllData = 
-#   ggplot() +
-#   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="young.mean")) +
-#   labs(title=str_wrap(paste("Young Bear - All Data"),80)) +
-#   scale_fill_gradient(name = "Proportion",
-#                        #limits = c(0,1),
-#                        low = "white",
-#                        high = "deepskyblue4") +
-#   theme(axis.title.x=element_blank(),
-#         axis.title.y=element_blank())
-# 
+
+  ggplot() +
+  geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="young.mean")) +
+  labs(title=str_wrap(paste("Young Turkey - All Data"),80)) +
+  scale_fill_gradient(name = "Proportion",
+                       #limits = c(0,1),
+                       low = "white",
+                       high = "deepskyblue4") +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+
 # 
 # 
 # plot.ppn.byyear.county = plot.ppn.byyear.adult.county.ExpWindow + plot.ppn.byyear.adult.county.AllData
