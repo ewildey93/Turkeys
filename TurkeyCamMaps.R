@@ -26,7 +26,7 @@ read_excel_allsheets <- function(filename, tibble = FALSE) {
 ##spatial map for cams###
 #########################
 TurkeyHist <- read_excel_allsheets("//central/OAS/Sandhill/Turkey Project/Datasheets/Turkey Histories.xlsx")
-register_google("AIzaSyC942RKkTJtniApeagdf7VmJuCWWHdOMQo", write=TRUE)
+register_google()
 TurkeyCamMaps <- list()
 for(i in 1:length(TurkeyHist)) {
   if(nrow(TurkeyHist[[i]] >1)){
