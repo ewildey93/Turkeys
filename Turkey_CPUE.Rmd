@@ -16,14 +16,17 @@ library(knitr)
 library(patchwork)
 library(readr)
 library(ggh4x)
-library(mgcv)
-library(shadowtext)
+
+# filter out counties without good sample size?
 
 # df <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_join.Rds", sep="/")) #4/15 to 6/30, need this as sf object
 # df <- filter(df)
 # df <- st_as_sf(df)
 dfAll <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_joinAll.Rds", sep="/"))
-df <- filter(dfAll, occ > 17 & occ < 29)
+df2024 <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_joinAll2024.Rds", sep="/"))
+dfAll <- rbind(dfAll, df2024)
+dfExpertC <- read_rds(paste(getwd(), "data_clean/effort_by_occ_df_counttriggers_joinExpertC.Rds", sep="/"))
+dfExpertC <- filter(dfExpertC, occ > 30 & occ < 40)
 county = get_spatial_data("counties")
 county <- st_transform(county, 3071)
 camsitesAll <- dfAll%>%group_by(cam_site_id)%>%slice_head()%>%dplyr::select(cam_site_id, geometry)%>%ungroup()
@@ -36,7 +39,7 @@ df <- left_join(df, camsite_countiesExp, by="cam_site_id")
 dfAll <- left_join(dfAll, camsite_countiesAll, by="cam_site_id")
 
 
-#Title- proportion of snapshot camera sites with a detection, spline plot with all zones?, legend titles and labels
+#filter for expert classification in august for triggers with poults, then get hens and poults separately by cam site and average by spatial unit, precision =1 for detection pull
 ```
 
 ## Parameters for filtering
@@ -73,11 +76,11 @@ n_occasions_annual_thresholdAllData <- 26
 df.byocc <- df %>%
   filter(days_active >= days_active_threshold) %>%
   filter(ppn_classified >= ppn_class_threshold) %>%
-  mutate(adult.binary = ifelse(BEAR_ADULT_AMT>0,1,0),
-         young.binary = ifelse(BEAR_YOUNG_AMT>0,1,0)) %>%
-  group_by(year,occ,bear_mgmt_zone_id) %>%
-  summarise(adult.sum = sum(BEAR_ADULT_AMT),
-            young.sum = sum(BEAR_YOUNG_AMT),
+  mutate(adult.binary = ifelse(TURKEY_AMT>0,1,0),
+         young.binary = ifelse(TURKEY_YOUNG_AMT>0,1,0)) %>%
+  group_by(year,occ,turkey_mgmt_unit_id) %>%
+  summarise(adult.sum = sum(TURKEY_AMT),
+            young.sum = sum(TURKEY_YOUNG_AMT),
             adult.occ = sum(adult.binary),
             young.occ = sum(young.binary),
             num.sites = n(),
@@ -96,13 +99,13 @@ df.byocc <- df %>%
 df.allocc <- df %>%
   filter(days_active >= days_active_threshold) %>%
   filter(ppn_classified >= ppn_class_threshold) %>%
-  group_by(cam_site_id,year,bear_mgmt_zone_id) %>%
-  summarise(adult.sum = sum(BEAR_ADULT_AMT),
-            young.sum = sum(BEAR_YOUNG_AMT),
+  group_by(cam_site_id,year,turkey_mgmt_unit_id) %>%
+  summarise(adult.sum = sum(TURKEY_AMT),
+            young.sum = sum(TURKEY_YOUNG_AMT),
             num.days = sum(days_active)) %>%
   mutate(adult.binary = ifelse(adult.sum>0,1,0),
          young.binary = ifelse(young.sum>0,1,0)) %>%
-  group_by(year,bear_mgmt_zone_id) %>%
+  group_by(year,turkey_mgmt_unit_id) %>%
   summarise(total.days = sum(num.days),
             adult.trigsperday = sum(adult.sum)/total.days,
             young.trigsperday = sum(young.sum)/total.days,
@@ -175,6 +178,7 @@ This plot shows the total triggers by occasion over the different species catego
 ```{r trigs_by_occ_plot, message=FALSE,warning=FALSE}
 activity_plot = dfAll %>%
   filter(days_active>0) %>%
+  filter(year > 2018 & year < 2024) %>%
   group_by(occ) %>%
   summarise(turkey_adult = sum(TURKEY_AMT),
             turkey_young = sum(TURKEY_YOUNG_AMT)) %>%
@@ -288,7 +292,7 @@ This plot has the proportion of sites with a detection across all occasions.
 #get rid of 2018 data fix axis, looks of plot
 AllOcc.Zone <-Merged.AllOcc.ByZone %>% select(c(year,turkey_mgmt_unit_id,
            adult.propocc, young.propocc,
-           DataPull)) %>% filter(year > 2018) %>%
+           DataPull)) %>% filter(year > 2018 & year < 2024) %>%
   pivot_longer(cols=c(adult.propocc, young.propocc)) %>%
   group_by(DataPull,year,turkey_mgmt_unit_id,name) 
 
@@ -364,7 +368,7 @@ This figure is similar to the furbearer products built for the May 2024 furbeare
 #                      labels = seq(2019,2023,1))
 # 
 # #################################All Data#################################
-#By zone
+#By zone, with 2024 data
 df.byocc.both1 = df.byoccAllData %>%
   select(time,year,occ,turkey_mgmt_unit_id,
          adult.propocc, young.propocc) %>%
@@ -394,7 +398,7 @@ year.ticks = seq(78,311,52)
     ylim(0,0.3) +
      theme(legend.position="none")
   
-  ggplot(filter(df.byocc.both1, name == adult.propocc),aes_string(x="time",y="value",col="turkey_mgmt_unit_id")) +
+  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="turkey_mgmt_unit_id")) +
   #geom_point(size=0.1) +
   #facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
   #geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
@@ -414,6 +418,55 @@ year.ticks = seq(78,311,52)
      labs(color='Turkey Management Unit') 
 
   
+#By zone without 2024 data
+df.byocc.both1 = df.byoccAllData %>%
+  filter(year < 2024) %>%
+  select(time,year,occ,turkey_mgmt_unit_id,
+         adult.propocc, young.propocc) %>%
+  pivot_longer(cols=c(adult.propocc, young.propocc))
+
+#df.byocc.both2 <- filter(df.byocc.both1, bear_mgmt_zone_id %in% c("A","B","C","D"))
+
+#52 occasions of 7
+year.lines = seq(53,312,52)
+year.ticks = seq(78,311,52)
+
+
+  ggplot(df.byocc.both1,aes_string(x="time",y="value",col="name")) +
+  facet_wrap(~turkey_mgmt_unit_id) +#,scales = c("free_y")) +
+  geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
+  stat_smooth() + #
+  geom_vline(xintercept=year.lines) +
+  theme(legend.position="right",
+        axis.ticks.x=element_blank()) +
+  labs(title=str_wrap("Proportion of Snapshot camera sites with turkey detections no 2024",75),
+       y = "Proportion of sites",
+       x = "Time",
+       subtitle = "Year Round, 2019 - 2023") +
+  scale_x_continuous(breaks = year.ticks,
+                     labels = seq(2019,2023,1)) +
+    coord_cartesian(xlim=c(53,312), expand = FALSE) +
+    ylim(0,0.3) +
+     theme(legend.position="none")
+  
+  ggplot(filter(df.byocc.both1, name == "adult.propocc"),aes_string(x="time",y="value",col="turkey_mgmt_unit_id")) +
+  #geom_point(size=0.1) +
+  #facet_wrap(~bear_mgmt_zone_id) +#,scales = c("free_y")) +
+  #geom_smooth(span=0.1, lwd=0.3,se=FALSE) + 
+  #geom_smooth(span=0.5, color="blue") +#
+  stat_smooth() + #
+  #stat_smooth(method = "gam", formula = y ~ s(x, bs = "cc", k = 6), size = 1, se = TRUE,    colour = "green")  +
+  geom_vline(xintercept=year.lines) +
+  theme(legend.position="right",
+        axis.ticks.x=element_blank()) +
+  labs(title=str_wrap("Proportion of sites with adult turkey detections, no 2024",75),
+       y = "Proportion of sites",
+       x = "Time",
+       subtitle = "Year Round, 2019 - 2023") +
+  scale_x_continuous(breaks = year.ticks,
+                     labels = seq(2019,2023,1)) +
+    coord_cartesian(xlim=c(53,312), expand = FALSE) +
+     labs(color='Turkey Management Unit') 
 
 # 
 # plot.ppn.byocc.byzone = ExpWindowZone + 
@@ -547,6 +600,7 @@ Similar to above, we can look at spatial trends for the average proportion of si
 
 # this is the layer name of interest in 'layers'
 layer = get_spatial_data("turkey_mgt_zones")
+layer <- layer %>%   group_by(turkey_mgmt_unit_id) %>%summarise()
 counties <- get_spatial_data("counties")
 
 #Expert Window
@@ -589,7 +643,7 @@ ppn.byyear.county.ExpWindow = df %>%
             young.sd = sd(young.ppn))
 
 #All Data
-ppn.byyear.AllData = dfAll %>% filter(year > 2018) %>%
+ppn.byyear.AllData = dfAll %>% filter(year > 2018 & year < 2024) %>%
   dplyr::filter(days_active >= days_active_threshold) %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
   group_by(turkey_mgmt_unit_id,cam_site_id,year) %>%
@@ -608,7 +662,7 @@ ppn.byyear.AllData = dfAll %>% filter(year > 2018) %>%
             adult.sd = sd(adult.ppn),
             young.sd = sd(young.ppn))
 
-ppn.byyear.county.AllData = dfAll %>% filter(year > 2018) %>%
+ppn.byyear.county.AllData = dfAll %>% filter(year > 2018 & year < 2024) %>%
   dplyr::filter(days_active >= days_active_threshold) %>%
   dplyr::filter(ppn_classified >= ppn_class_threshold) %>%
   group_by(COUNTY_NAM,cam_site_id,year) %>%
@@ -684,13 +738,10 @@ map.ppn.byyear = layer %>%
 # plot.ppn.byyear.young.AllData = 
   ggplot() +
   geom_sf(data=map.ppn.byyear,mapping=aes_string(fill="young.mean")) +
+  geom_sf_text(data = map.ppn.byyear, aes(label = turkey_mgmt_unit_id), size=9, color="white")+
   labs(title=str_wrap(paste("Young Turkey - All Data"),80)) +
-  scale_fill_gradient(name = "Proportion",
-                       #limits = c(0,1),
-                       low = "white",
-                       high = "deepskyblue4") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank())
+  scale_y_continuous() +
+    theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
 
 
 # plot.ppn.byyear = plot.ppn.byyear.adult.ExpWindow + plot.ppn.byyear.adult.AllData
@@ -785,13 +836,11 @@ map.ppn.byyear.county = counties %>%
 
   ggplot() +
   geom_sf(data=map.ppn.byyear.county,mapping=aes_string(fill="young.mean")) +
+  geom_sf(data=layer, color= "white", fill=NA) +
+  geom_sf_text(data = map.ppn.byyear, aes(label = turkey_mgmt_unit_id), size=9, color="white")+
   labs(title=str_wrap(paste("Young Turkey - All Data"),80)) +
-  scale_fill_gradient(name = "Proportion",
-                       #limits = c(0,1),
-                       low = "white",
-                       high = "deepskyblue4") +
-  theme(axis.title.x=element_blank(),
-        axis.title.y=element_blank())
+  scale_y_continuous() +
+    theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
 
 # 
 # 
@@ -840,4 +889,25 @@ map.ppn.byyear.county = counties %>%
 
 ```
 
+## Poult to hen ratio from Expert Classification
+```{r}
+#filter for expert classification in august for triggers with poults, then get hens and poults separately by cam site and average by spatial unit, precision =1 for detection pull
+#average across all occasions, use max counts not average of averages
+ExpertC_summary <- filter(dfExpertC, TURKEY_YOUNG_AMT > 0)%>%group_by(year,turkey_mgmt_unit_id, cam_site_id)%>% summarise(avgHen=mean(TURKEY_AMT), avgPoult=mean(TURKEY_YOUNG_AMT))
+table(ExpertC_summary$year)
+ByZone_summary <- ExpertC_summary%>%group_by(turkey_mgmt_unit_id)%>%summarise(avgHen2=mean(avgHen), avgPoult2=mean(avgPoult), PoulttoHen=avgPoult2/avgHen2)
+
+ByZone_summary2 = layer %>%
+  st_transform(., crs = 3071) %>%
+  left_join(st_drop_geometry(ByZone_summary))
+
+
+  ggplot() +
+  geom_sf(data=ByZone_summary2,mapping=aes_string(fill="PoulttoHen")) +  #
+  geom_sf_text(data = ByZone_summary2, aes(label = turkey_mgmt_unit_id), size=9, color="white")+
+  labs(title=str_wrap(paste("Poult to Hen Ratio by Zone"),80)) +
+  scale_y_continuous() +
+    theme(legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
+
+```
 

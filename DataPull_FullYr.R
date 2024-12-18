@@ -24,8 +24,8 @@ sswids::setup_project()
 #####################################################################################
 
 # set min/max years for obtaining data
-min_year <- 2018
-max_year <- 2023
+min_year <-2018
+max_year <- 2024
 
 # season start/end dates (in -MM-DD format)
 # start with this and consider early spring and fall for getting newborns and yearlings 
@@ -61,7 +61,7 @@ grid <- c('SSWI',"ELKBR")
 
 
 # set classification precision level
-prec <- 0
+prec <- 1
 
 # set distance (meters) between camera_location_seq_nos to merge/average locations
 cam_distance <- 100
@@ -90,18 +90,20 @@ raw_data <-
   )
 
 # save the raw queries
-write_raw_data(raw_data, filename="2024")
+write_raw_data(raw_data, filename="Expert")
 
 # continue using detections, effort, and locations separately
 # read in from raw_data folder
-detections_df_raw <- read_csv('./data_raw/detections_df_raw2024.csv')
-effort_df_raw <- read_csv('./data_raw/effort_df_raw2024.csv')
-locs_df_raw <- read_rds('./data_raw/locations_df_raw2024.rds')
+detections_df_raw <- read_csv('./data_raw/detections_df_rawExpert.csv')
+effort_df_raw <- read_csv('./data_raw/effort_df_rawExpert.csv')
+locs_df_raw <- read_rds('./data_raw/locations_df_rawExpert.rds')
 
 # see available spatial layers
 list_spatial_layers()
 
 TurkeyZones <- get_spatial_data("turkey_mgt_zones")
+TurkeyU <- TurkeyZones %>%   group_by(turkey_mgmt_unit_id) %>%summarise()
+plot(TurkeyU)
 Counties <- get_spatial_data("counties")
 
 
@@ -207,7 +209,7 @@ Q2 = left_join(effort_by_day2, Q, by=join_by(date_active == FINAL_DATE,
 view(head(Q))
 view(head(Q2))
 
-Q3 <- Q2%>%group_by(cam_site_id, year.x, occ)%>% 
+Q3 <- Q2%>%group_by(cam_site_id, year, occ)%>% 
   summarise(classified= sum(CLASS_EFFORT_TRIGGER_COUNT), total=sum(MOTION_TRIGGER_COUNT),
             ppn_classified=classified/total)
 #colnames(Q3)[2] <- "year"
@@ -281,8 +283,8 @@ effort_by_occ_df_counttriggers_join = effort_by_occ_df_counttriggers %>%
               distinct,.)
 
 # save effort join files
-write_rds(effort_by_occ_df_maxcount_join,"data_clean/effort_by_occ_df_maxcount_joinALL.Rds")
-write_rds(effort_by_occ_df_counttriggers_join,"data_clean/effort_by_occ_df_counttriggers_joinALL.Rds")
+write_rds(effort_by_occ_df_maxcount_join,"data_clean/effort_by_occ_df_maxcount_joinExpertC.Rds")
+write_rds(effort_by_occ_df_counttriggers_join,"data_clean/effort_by_occ_df_counttriggers_joinExpertC.Rds")
 
 
 
