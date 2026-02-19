@@ -1,0 +1,181 @@
+---
+title: "Turkey Telemetry"
+output: html_document
+date: "2025-12-09"
+params:
+  Locs: ""
+---
+
+```{r setup, include=FALSE}
+library(readxl)
+library(stringr)
+library(openxlsx)
+library(amt)
+library(sf)
+library(ctmm)
+library(units)
+library(dplyr)
+library(leaflet)
+library(leaflet.extras2)
+library(leaftime)
+
+
+TurkeyLocs <- params$Locs
+
+TurkeySF <- st_as_sf(TurkeyLocs, coords=c("X", "Y"), crs=4326)
+TurkeySF <- st_transform(TurkeySF, 3071)
+TurkeySF <- cbind(TurkeySF, st_coordinates(TurkeySF))
+colnames(TurkeySF)[15:16] <- c("Longitude", "Latitude")
+TurkeySF2 <- TurkeySF%>%select(c(Device.Name, DateTime, Latitude, Longitude))
+
+TurkeyLines <- cbind(TurkeyLocs, data.frame("X2"=lead(TurkeyLocs$X),"Y2"=lead(TurkeyLocs$Y)))
+TurkeyLines <- TurkeyLines[!is.na(TurkeyLines$X2),]
+TurkeyLines$geometry <- sprintf("LINESTRING(%s %s, %s %s)", TurkeyLines$X, TurkeyLines$Y, TurkeyLines$X2, TurkeyLines$Y2)
+TurkeyLines <- st_as_sf(TurkeyLines, wkt="geometry", crs=4326)
+TurkeyLines2 <- TurkeyLines%>%rename(Longitude=X, Latitude=Y, Device.Name=`Device Name`)%>%
+                select(c(Device.Name, DateTime, Latitude, Longitude))#%>%
+                #relocate(c(Latitude, Longitude), .after = DateTime)
+
+TurkeyLinesandPts <- rbind(TurkeyLines2, st_transform(TurkeySF2, 4326))
+TurkeyLinesandPts$start <- TurkeyLinesandPts$DateTime
+TurkeyLinesandPts$end <- lead(TurkeyLinesandPts$DateTime)
+TurkeyLinesandPts$end[is.na(TurkeyLinesandPts$end)] <- TurkeyLinesandPts$start[nrow(TurkeyLinesandPts)] + 60*60
+TurkeyLinesandPtsgeo <- geojsonio::geojson_json(TurkeyLinesandPts,lat="Latitude",lon="Longitude")
+
+
+TurkeyTrack <- make_track(TurkeySF, Longitude,Latitude,.t=DateTime, id=Device.Name, crs = 3071)
+TurkeyTelem <- as_telemetry(TurkeyTrack)
+TurkeyVG <- variogram(TurkeyTelem)
+plot(TurkeyVG)
+TurkeyHR <- hr_akde(TurkeyTrack, model = fit_ctmm(TurkeyTrack, "auto"))
+TurkeyHR2 <- append(TurkeyHR, list(ctmm:::name.ctmm(TurkeyHR[["model"]])))
+
+
+
+```
+
+```{r mvmt, warnings=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+Caps2024 <- read_excel("Z:/Sandhill/Turkey Project/Datasheets/2024 Files/TurkeyCaptures_2024.xlsx")
+Caps2025 <- read_excel("Z:/Sandhill/Turkey Project/Datasheets/2025 Files/TurkeyCaptures_2025.xlsx")
+CapsAll <- rbind(Caps2024, Caps2025)
+CapsAll$BirdID <- paste0(str_extract(string = CapsAll$Wing_Tag_Color, pattern = "^[A-Z]"),
+                         sprintf('%03d', as.numeric(CapsAll$Wing_Tag_Num)))
+Bird <- CapsAll[grep(pattern = unique(str_extract(TurkeyLocs$`Device Name`, pattern="[A-Z]\\d{3}")),
+                     x=CapsAll$BirdID), c("BirdID", "Year", "Study_Site", "Latitude", "Longitude", "Sex", "Age")]
+
+HRinfo <- data.frame("akde.area"=unname(hr_area(TurkeyHR)[2,3]/1e6),
+                     "akde.LCI"=unname(hr_area(TurkeyHR)[1,3]/1e6),
+                     "akde.HCI"=unname(hr_area(TurkeyHR)[3,3]/1e6), 
+                     "model"=TurkeyHR2[[9]])
+HRinfo <- HRinfo%>%mutate(across(matches("akde"), ~set_units(., "km^2")))
+Bird2 <- cbind(Bird, HRinfo)
+Bird2SF <- st_as_sf(Bird2, coords=c("Longitude", "Latitude"), crs=4326)
+```
+
+```{r table, echo=FALSE}
+Bird2%>%
+  kableExtra::kbl(caption="Home Range Info") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+
+
+```{r map, echo=FALSE, fig.width=9, fig.height=10}
+
+leaflet() %>% 
+  addProviderTiles('Esri.WorldImagery') %>%
+  addPolygons(data = st_transform(hr_isopleths(TurkeyHR, levels=0.95), 4326)) %>%
+  addCircleMarkers(data=Bird2SF, fillColor = "red", fillOpacity = 0.5,   stroke=F, radius=5)%>%
+  #addPolylines(data=st_transform(TurkeySFlines[["Orange015"]], 4326), color="black") #%>%
+  #addCircleMarkers(data=st_transform(TurkeySFList[["Orange015"]], 4326), fillColor = "black", fillOpacity = 1, stroke=F, radius=3, group="points")%>%
+  addTimeline(TurkeyLinesandPtsgeo, width="95%", sliderOpts= sliderOptions(steps=2)) 
+```
+
+
+
+## Brooding Range
+```{r Brooding Condition, echo=FALSE}
+BroodingBirds <- read.csv("Z:/Sandhill/Turkey Project/Datasheets/BroodingBirds.csv")%>%mutate(across(matches("Brood"), ~as.Date(., format="%m/%d/%Y")))
+
+
+BroodingBird <- BroodingBirds[BroodingBirds$BirdID == unique(str_extract(TurkeyLocs$`Device Name`, pattern="[A-Z]\\d{3}")),]
+isBrooding <- nrow(BroodingBird) > 0
+
+if(isBrooding == FALSE){
+  print("Not a brooding bird")
+}
+```
+
+
+```{r Setup2, include=FALSE, eval=isBrooding}
+TurkeyLocs <- TurkeyLocs%>%filter(between(DateTime, BroodingBird$StartBrood, BroodingBird$EndBrood))
+
+TurkeySF <- st_as_sf(TurkeyLocs, coords=c("X", "Y"), crs=4326)
+TurkeySF <- st_transform(TurkeySF, 3071)
+TurkeySF <- cbind(TurkeySF, st_coordinates(TurkeySF))
+colnames(TurkeySF)[15:16] <- c("Longitude", "Latitude")
+TurkeySF2 <- TurkeySF%>%select(c(Device.Name, DateTime, Latitude, Longitude))
+
+TurkeyLines <- cbind(TurkeyLocs, data.frame("X2"=lead(TurkeyLocs$X),"Y2"=lead(TurkeyLocs$Y)))
+TurkeyLines <- TurkeyLines[!is.na(TurkeyLines$X2),]
+TurkeyLines$geometry <- sprintf("LINESTRING(%s %s, %s %s)", TurkeyLines$X, TurkeyLines$Y, TurkeyLines$X2, TurkeyLines$Y2)
+TurkeyLines <- st_as_sf(TurkeyLines, wkt="geometry", crs=4326)
+TurkeyLines2 <- TurkeyLines%>%rename(Longitude=X, Latitude=Y, Device.Name=`Device Name`)%>%
+                select(c(Device.Name, DateTime, Latitude, Longitude))#%>%
+                #relocate(c(Latitude, Longitude), .after = DateTime)
+
+TurkeyLinesandPts <- rbind(TurkeyLines2, st_transform(TurkeySF2, 4326))
+TurkeyLinesandPts$start <- TurkeyLinesandPts$DateTime
+TurkeyLinesandPts$end <- lead(TurkeyLinesandPts$DateTime)
+TurkeyLinesandPts$end[is.na(TurkeyLinesandPts$end)] <- TurkeyLinesandPts$start[nrow(TurkeyLinesandPts)] + 60*60
+TurkeyLinesandPtsgeo <- geojsonio::geojson_json(TurkeyLinesandPts,lat="Latitude",lon="Longitude")
+
+
+TurkeyTrack <- make_track(TurkeySF, Longitude,Latitude,.t=DateTime, id=Device.Name, crs = 3071)
+TurkeyTelem <- as_telemetry(TurkeyTrack)
+TurkeyVG <- variogram(TurkeyTelem)
+plot(TurkeyVG)
+TurkeyHR <- hr_akde(TurkeyTrack, model = fit_ctmm(TurkeyTrack, "auto"))
+TurkeyHR2 <- append(TurkeyHR, list(ctmm:::name.ctmm(TurkeyHR[["model"]])))
+```
+
+```{r mvmt2, warnings=FALSE, message=FALSE, echo=FALSE, include=FALSE, eval=isBrooding}
+Caps2024 <- read_excel("Z:/Sandhill/Turkey Project/Datasheets/2024 Files/TurkeyCaptures_2024.xlsx")
+Caps2025 <- read_excel("Z:/Sandhill/Turkey Project/Datasheets/2025 Files/TurkeyCaptures_2025.xlsx")
+CapsAll <- rbind(Caps2024, Caps2025)
+CapsAll$BirdID <- paste0(str_extract(string = CapsAll$Wing_Tag_Color, pattern = "^[A-Z]"),
+                         sprintf('%03d', as.numeric(CapsAll$Wing_Tag_Num)))
+Bird <- CapsAll[grep(pattern = unique(str_extract(TurkeyLocs$`Device Name`, pattern="[A-Z]\\d{3}")),
+                     x=CapsAll$BirdID), c("BirdID", "Year", "Study_Site", "Latitude", "Longitude", "Sex", "Age")]
+
+HRinfo <- data.frame("akde.area"=round(unname(hr_area(TurkeyHR)[2,3]/1e6),2),
+                     "akde.LCI"=round(unname(hr_area(TurkeyHR)[1,3]/1e6), 2),
+                     "akde.HCI"=round(unname(hr_area(TurkeyHR)[3,3]/1e6), 2), 
+                     "model"=TurkeyHR2[[9]])
+HRinfo <- HRinfo%>%mutate(across(matches("akde"), ~set_units(., "km^2")))
+BroodDates <- BroodingBird%>%select(StartBrood, EndBrood)
+Bird2 <- cbind(Bird,HRinfo, BroodDates)
+Bird2SF <- st_as_sf(Bird2, coords=c("Longitude", "Latitude"), crs=4326)
+```
+
+```{r table2, echo=FALSE, eval=isBrooding}
+Bird2%>%
+  kableExtra::kbl(caption="Home Range Info") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+
+
+```{r map2, echo=FALSE, fig.width=9, fig.height=10, eval=isBrooding}
+
+leaflet() %>% 
+  addProviderTiles('Esri.WorldImagery') %>%
+  addPolygons(data = st_transform(hr_isopleths(TurkeyHR, levels=0.95), 4326)) %>%
+  addCircleMarkers(data=Bird2SF, fillColor = "red", fillOpacity = 0.5,   stroke=F, radius=5)%>%
+  #addPolylines(data=st_transform(TurkeySFlines[["Orange015"]], 4326), color="black") #%>%
+  #addCircleMarkers(data=st_transform(TurkeySFList[["Orange015"]], 4326), fillColor = "black", fillOpacity = 1, stroke=F, radius=3, group="points")%>%
+  addTimeline(TurkeyLinesandPtsgeo, width="95%", sliderOpts= sliderOptions(steps=2)) 
+```
+
